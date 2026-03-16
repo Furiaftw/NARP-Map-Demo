@@ -1,41 +1,28 @@
+import { getUser } from '@netlify/identity'
 import { getStore } from '@netlify/blobs'
 import type { Context, Config } from '@netlify/functions'
 
 const OWNER_EMAIL = 'grisales4000@gmail.com'
 
-function getUserEmailFromToken(req: Request): string | null {
-  const auth = req.headers.get('authorization')
-  if (!auth?.startsWith('Bearer ')) return null
+async function isWhitelisted(): Promise<boolean> {
+  const user = await getUser()
+  if (!user) return false
+  const email = user.email?.toLowerCase() || ''
+  if (email === OWNER_EMAIL) return true
+  const store = getStore({ name: 'whitelist', consistency: 'strong' })
   try {
-    const token = auth.split(' ')[1]
-    let payload = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
-    while (payload.length % 4) payload += '='
-    const data = JSON.parse(atob(payload))
-    return data.email || null
-  } catch {
-    return null
-  }
+    const raw = await store.get('approved-emails', { type: 'text' })
+    if (raw) {
+      const whitelist: string[] = JSON.parse(raw)
+      return whitelist.includes(email)
+    }
+  } catch {}
+  return false
 }
 
 export default async (req: Request, context: Context) => {
-  const email = getUserEmailFromToken(req)
-  if (!email) {
+  if (!(await isWhitelisted())) {
     return new Response('Unauthorized', { status: 401 })
-  }
-
-  // Check if user is approved staff or owner
-  const userStore = getStore({ name: 'user-management', consistency: 'strong' })
-  let whitelist: Record<string, any> = {}
-  try {
-    const raw = await userStore.get('whitelist', { type: 'text' })
-    if (raw) whitelist = JSON.parse(raw)
-  } catch {}
-
-  const userData = whitelist[email]
-  // Allow owner even if whitelist is empty (first-time setup)
-  const isOwner = email === OWNER_EMAIL
-  if (!isOwner && (!userData || !userData.approved || userData.role === 'user')) {
-    return new Response('Only staff and owner can update map link', { status: 403 })
   }
 
   const { url } = await req.json()
