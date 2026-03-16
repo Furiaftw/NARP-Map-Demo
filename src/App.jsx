@@ -3,8 +3,17 @@ import {
  X, Scroll, Shield, Compass, Target, Info, ZoomIn,
  ZoomOut, Maximize, MousePointer2, Plus, Trash2,
  Upload, Save, Lock, Unlock, Landmark, Home, Star,
- Map as MapIcon, ChevronRight, Eye, Link as LinkIcon, User, Activity
+ Map as MapIcon, ChevronRight, Eye, Link as LinkIcon, User, Activity,
+ LogOut, Image
 } from 'lucide-react';
+import {
+  getUser,
+  logout as identityLogout,
+  oauthLogin,
+  handleAuthCallback,
+  onAuthChange,
+  AUTH_EVENTS,
+} from '@netlify/identity';
 
 
 // --- Tactical Categories & Default Colors ---
@@ -31,14 +40,19 @@ const MARKER_TYPES = {
 
 
 export default function App() {
- // Auth
- const [isAdmin, setIsAdmin] = useState(false);
- const [authInput, setAuthInput] = useState("");
+ // Auth (Netlify Identity)
+ const [currentUser, setCurrentUser] = useState(null);
+ const [authLoading, setAuthLoading] = useState(true);
  const [showLogin, setShowLogin] = useState(false);
 
+ const isAdmin = !!currentUser;
 
  // Map Data
- const [mapImage, setMapImage] = useState(null);
+ const [mapUrl, setMapUrl] = useState('');
+ const [mapLinkInput, setMapLinkInput] = useState('');
+ const [mapLinkSaving, setMapLinkSaving] = useState(false);
+ const [mapLinkMessage, setMapLinkMessage] = useState('');
+ const [showMapLinkEditor, setShowMapLinkEditor] = useState(false);
  const [markers, setMarkers] = useState([]);
  const [selectedId, setSelectedId] = useState(null);
  const [isAdding, setIsAdding] = useState(false);
@@ -59,7 +73,7 @@ export default function App() {
  const [tempMarker, setTempMarker] = useState({
    name: '',
    type: 'VILLAGE',
-   symbol: '火',
+   symbol: '\u706B',
    color: '#f59e0b',
    description: '',
    links: [{ text: '', url: '' }],
@@ -69,34 +83,89 @@ export default function App() {
 
 
  const mapContainerRef = useRef(null);
- const fileInputRef = useRef(null);
 
 
- // --- Auth ---
- const handleLogin = (e) => {
-   e.preventDefault();
-   if (authInput.toUpperCase() === "NARP") {
-     setIsAdmin(true);
-     setShowLogin(false);
-     setAuthInput("");
-   } else {
-     setAuthInput("");
+ // --- Auth (Netlify Identity with Google OAuth) ---
+ useEffect(() => {
+   async function init() {
+     try {
+       const result = await handleAuthCallback();
+       if (result && (result.type === 'oauth' || result.type === 'confirmation')) {
+         setCurrentUser(result.user);
+       }
+     } catch {
+       // callback not present or failed
+     }
+
+     const user = await getUser();
+     setCurrentUser(user);
+     setAuthLoading(false);
    }
+   init();
+
+   const unsubscribe = onAuthChange((event, user) => {
+     if (event === AUTH_EVENTS.LOGIN) setCurrentUser(user);
+     if (event === AUTH_EVENTS.LOGOUT) setCurrentUser(null);
+   });
+
+   return () => unsubscribe();
+ }, []);
+
+ const handleGoogleLogin = () => {
+   oauthLogin('google');
+ };
+
+ const handleLogout = async () => {
+   try {
+     await identityLogout();
+   } catch {
+     // ignore
+   }
+   setCurrentUser(null);
+   setShowLogin(false);
  };
 
 
- const handleImageUpload = (e) => {
-   if (!isAdmin) return;
-   const file = e.target.files[0];
-   if (file) {
-     const reader = new FileReader();
-     reader.onload = (event) => {
-       setMapImage(event.target.result);
-       setMarkers([]);
-       resetZoom();
-     };
-     reader.readAsDataURL(file);
+ // --- Map Link (fetch on load, save via API) ---
+ useEffect(() => {
+   async function fetchMapLink() {
+     try {
+       const res = await fetch('/api/map-link');
+       if (res.ok) {
+         const data = await res.json();
+         if (data.url) {
+           setMapUrl(data.url);
+           setMapLinkInput(data.url);
+         }
+       }
+     } catch {
+       // API not available (local dev without netlify dev)
+     }
    }
+   fetchMapLink();
+ }, []);
+
+ const handleSaveMapLink = async () => {
+   if (!mapLinkInput.trim()) return;
+   setMapLinkSaving(true);
+   setMapLinkMessage('');
+   try {
+     const res = await fetch('/api/map-link', {
+       method: 'POST',
+       headers: { 'Content-Type': 'application/json' },
+       body: JSON.stringify({ url: mapLinkInput.trim() }),
+     });
+     if (res.ok) {
+       setMapUrl(mapLinkInput.trim());
+       setMapLinkMessage('Map link saved!');
+       setTimeout(() => setMapLinkMessage(''), 3000);
+     } else {
+       setMapLinkMessage('Failed to save. Try again.');
+     }
+   } catch {
+     setMapLinkMessage('Error saving map link.');
+   }
+   setMapLinkSaving(false);
  };
 
 
@@ -122,7 +191,7 @@ export default function App() {
 
  const startDrag = (e) => {
    if (!e.touches) e.preventDefault();
-  
+
    if (e.touches && e.touches.length === 2) {
      const d = getDistance(e.touches[0], e.touches[1]);
      setInitialPinchDistance(d);
@@ -151,10 +220,10 @@ export default function App() {
    setHasMoved(true);
    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-  
+
    let newX = clientX - dragStart.x;
    let newY = clientY - dragStart.y;
-  
+
    if (mapContainerRef.current) {
      const rect = mapContainerRef.current.getBoundingClientRect();
      const maxX = (rect.width * (scale - 1)) / 2;
@@ -203,7 +272,7 @@ export default function App() {
    };
    setMarkers([...markers, newMarker]);
    setShowEditor(null);
-   setTempMarker({ name: '', type: 'VILLAGE', symbol: '火', color: '#f59e0b', description: '', links: [{ text: '', url: '' }], status: '', leader: '' });
+   setTempMarker({ name: '', type: 'VILLAGE', symbol: '\u706B', color: '#f59e0b', description: '', links: [{ text: '', url: '' }], status: '', leader: '' });
  };
 
 
@@ -239,10 +308,19 @@ export default function App() {
            <p className="text-[8px] md:text-[9px] uppercase tracking-[0.4em] text-[#78716c] font-bold mt-1">Ninja Art Roleplay World</p>
          </div>
        </div>
-      
+
        <div className="flex items-center gap-2">
          {isAdmin ? (
            <div className="flex items-center gap-2">
+             <button
+               onClick={() => setShowMapLinkEditor(!showMapLinkEditor)}
+               className={`p-2 md:px-4 md:py-2 rounded-lg border transition-all text-xs font-bold uppercase tracking-widest flex items-center gap-2
+                 ${showMapLinkEditor ? 'bg-amber-500 text-black border-amber-400' : 'bg-[#1c1917] text-white border-[#292524]'}
+               `}
+             >
+               <Image size={16}/>
+               <span className="hidden sm:inline">Map Link</span>
+             </button>
              <button
                onClick={() => setIsAdding(!isAdding)}
                className={`p-2 md:px-4 md:py-2 rounded-lg border transition-all text-xs font-bold uppercase tracking-widest flex items-center gap-2
@@ -252,34 +330,67 @@ export default function App() {
                {isAdding ? <Save size={16}/> : <Plus size={16}/>}
                <span className="hidden sm:inline">{isAdding ? 'Finalize' : 'Add Pin'}</span>
              </button>
-             <button onClick={() => setIsAdmin(false)} className="p-2 md:px-4 md:py-2 bg-red-900/10 text-red-500 rounded-lg border border-red-900/40 text-xs font-bold uppercase"><Lock size={16} /></button>
+             <button onClick={handleLogout} className="p-2 md:px-4 md:py-2 bg-red-900/10 text-red-500 rounded-lg border border-red-900/40 text-xs font-bold uppercase flex items-center gap-2">
+               <LogOut size={16} />
+               <span className="hidden sm:inline">Logout</span>
+             </button>
            </div>
          ) : (
            <button onClick={() => setShowLogin(true)} className="flex items-center gap-2 px-4 py-2 bg-[#1c1917] hover:bg-amber-500 hover:text-black rounded-lg border border-[#292524] transition-all text-[10px] md:text-xs font-bold uppercase tracking-widest">
-             <Unlock size={14} /> <span className="hidden sm:inline">Admin Panel</span>
+             <Unlock size={14} /> <span className="hidden sm:inline">Staff Login</span>
            </button>
          )}
        </div>
      </header>
 
 
+     {/* Map Link Editor (Staff Only) */}
+     {isAdmin && showMapLinkEditor && (
+       <div className="z-[55] bg-[#1c1917] border-b border-[#292524] px-4 py-4 md:px-8">
+         <div className="max-w-2xl mx-auto">
+           <div className="flex items-center gap-2 mb-3">
+             <Image size={14} className="text-amber-500" />
+             <h3 className="text-[10px] font-black text-amber-500 uppercase tracking-[0.3em]">Map Image Link</h3>
+           </div>
+           <p className="text-[10px] text-[#78716c] mb-3 uppercase tracking-widest">Paste an image URL (e.g. Imgur link) to display as the map. This will be saved for all visitors.</p>
+           <div className="flex gap-3">
+             <input
+               type="url"
+               value={mapLinkInput}
+               onChange={e => setMapLinkInput(e.target.value)}
+               placeholder="https://i.imgur.com/example.png"
+               className="flex-grow bg-black border border-[#292524] rounded-xl p-3 text-sm focus:border-amber-500/50 outline-none font-mono"
+             />
+             <button
+               onClick={handleSaveMapLink}
+               disabled={mapLinkSaving || !mapLinkInput.trim()}
+               className="px-6 py-3 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed text-black font-black uppercase tracking-widest text-[10px] rounded-xl transition-all flex items-center gap-2"
+             >
+               <Save size={14} />
+               {mapLinkSaving ? 'Saving...' : 'Save'}
+             </button>
+           </div>
+           {mapLinkMessage && (
+             <p className={`text-[10px] mt-2 font-bold uppercase tracking-widest ${mapLinkMessage.includes('saved') ? 'text-green-500' : 'text-red-500'}`}>
+               {mapLinkMessage}
+             </p>
+           )}
+         </div>
+       </div>
+     )}
+
+
      <main className="flex-grow relative flex flex-col lg:flex-row h-[calc(100vh-68px)] overflow-hidden">
        <div className="flex-grow relative bg-[#0c0a09] h-full">
-         {!mapImage ? (
+         {!mapUrl ? (
            <div className="h-full w-full flex flex-col items-center justify-center p-8 text-center bg-[#0c0a09]">
              <div className="w-20 h-20 rounded-full bg-[#1c1917] flex items-center justify-center mb-6 shadow-2xl border border-[#292524]">
                <Compass size={40} className="text-[#292524] animate-pulse" />
              </div>
-             <h2 className="text-lg font-bold text-white/40 uppercase tracking-widest mb-2">No Map Uploaded</h2>
-             {isAdmin && (
-               <button
-                 onClick={() => fileInputRef.current.click()}
-                 className="mt-6 px-10 py-4 bg-amber-500 text-black font-black uppercase tracking-widest rounded-xl shadow-[0_10px_30px_rgba(245,158,11,0.2)] hover:scale-105 transition-all"
-               >
-                 Upload Map Data
-               </button>
-             )}
-             <input type="file" ref={fileInputRef} onChange={handleImageUpload} className="hidden" accept="image/*" />
+             <h2 className="text-lg font-bold text-white/40 uppercase tracking-widest mb-2">No Map Available</h2>
+             <p className="text-[10px] text-[#57534e] uppercase tracking-widest max-w-xs">
+               {isAdmin ? 'Use the "Map Link" button above to set a map image URL.' : 'A staff member needs to set a map image link.'}
+             </p>
            </div>
          ) : (
            <div className="h-full w-full relative touch-none select-none">
@@ -304,7 +415,7 @@ export default function App() {
                  className="relative origin-center transition-transform duration-200 ease-out"
                  style={{ width: '100%', height: '100%', transform: `scale(${scale}) translate(${position.x / scale}px, ${position.y / scale}px)` }}
                >
-                 <img src={mapImage} alt="Map" draggable="false" className="w-full h-full object-contain pointer-events-none brightness-[0.85] contrast-[1.1]" />
+                 <img src={mapUrl} alt="Map" draggable="false" className="w-full h-full object-contain pointer-events-none brightness-[0.85] contrast-[1.1]" crossOrigin="anonymous" />
 
 
                  {markers.map((m) => (
@@ -343,7 +454,7 @@ export default function App() {
                      <h3 className="font-black text-white uppercase tracking-[0.2em] text-xs">Pin Info</h3>
                      <button onClick={() => setShowEditor(null)} className="p-2 text-[#78716c] hover:text-white"><X size={20}/></button>
                    </div>
-                  
+
                    <div className="grid grid-cols-2 gap-4">
                      <div>
                        <label className="text-[9px] text-[#78716c] uppercase font-black block mb-1.5">Pin name</label>
@@ -464,7 +575,7 @@ export default function App() {
                    </button>
                  </div>
                </div>
-              
+
                <div className="mb-8">
                  <span
                    className="inline-block text-[10px] font-black px-2.5 py-1 rounded-full uppercase tracking-widest mb-3 text-black"
@@ -474,7 +585,7 @@ export default function App() {
                  </span>
                  <h2 className="text-4xl font-black text-white tracking-tight uppercase leading-tight">{selectedLoc.name}</h2>
                </div>
-              
+
                <div className="space-y-6 flex-grow">
                  {(selectedLoc.description || !selectedLoc.description) && (
                    <div className="bg-black/40 rounded-2xl p-6 border border-white/5 space-y-4 shadow-inner">
@@ -554,7 +665,7 @@ export default function App() {
                  <h3 className="text-white font-black uppercase tracking-[0.5em] text-xs mb-4">Pin Menu</h3>
                  <p className="text-[10px] text-[#57534e] uppercase tracking-widest leading-relaxed max-w-[220px] mx-auto">Select a pin to show info.</p>
                </div>
-              
+
                {markers.length > 0 && (
                  <div className="w-full text-left bg-black/30 p-5 rounded-2xl border border-white/5 space-y-4">
                    <p className="text-[9px] font-black text-amber-500 uppercase tracking-[0.5em] mb-2">Active Signals</p>
@@ -604,25 +715,33 @@ export default function App() {
        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/90 backdrop-blur-xl p-6">
          <div className="bg-[#1c1917] p-8 md:p-12 rounded-[2rem] border border-amber-500/10 shadow-3xl max-w-sm w-full text-center space-y-8">
            <div className="w-24 h-24 rounded-3xl bg-amber-500/5 border border-amber-500/10 flex items-center justify-center mx-auto shadow-inner">
-             <Lock size={48} className="text-amber-500" />
+             <Shield size={48} className="text-amber-500" />
            </div>
            <div>
-             <h2 className="text-3xl font-black text-white uppercase tracking-[0.2em]">Admin Panel</h2>
+             <h2 className="text-3xl font-black text-white uppercase tracking-[0.2em]">Staff Login</h2>
+             <p className="text-[10px] text-[#78716c] uppercase tracking-widest mt-3">Sign in with your Google account</p>
            </div>
-           <form onSubmit={handleLogin} className="space-y-6">
-             <input
-               type="password"
-               value={authInput}
-               onChange={e => setAuthInput(e.target.value)}
-               placeholder="****"
-               autoFocus
-               className="w-full bg-black border-2 border-[#292524] rounded-2xl p-5 text-center tracking-[1.2em] text-amber-500 font-bold focus:border-amber-500 outline-none transition-all"
-             />
-             <div className="flex gap-3">
-               <button type="button" onClick={() => setShowLogin(false)} className="flex-1 bg-[#292524] py-5 rounded-2xl font-black uppercase tracking-widest text-[10px] text-[#78716c]">Abort</button>
-               <button type="submit" className="flex-[2] bg-amber-500 text-black py-5 rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-lg active:scale-95 transition-transform">Authorize</button>
-             </div>
-           </form>
+           <div className="space-y-4">
+             <button
+               onClick={handleGoogleLogin}
+               className="w-full bg-white hover:bg-gray-100 text-black py-5 rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-lg active:scale-95 transition-all flex items-center justify-center gap-3"
+             >
+               <svg className="w-5 h-5" viewBox="0 0 24 24">
+                 <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/>
+                 <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                 <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+                 <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+               </svg>
+               Sign in with Google
+             </button>
+             <button
+               type="button"
+               onClick={() => setShowLogin(false)}
+               className="w-full bg-[#292524] py-5 rounded-2xl font-black uppercase tracking-widest text-[10px] text-[#78716c] hover:text-white transition-all"
+             >
+               Cancel
+             </button>
+           </div>
          </div>
        </div>
      )}
@@ -654,7 +773,7 @@ const FancyMarker = ({ isSelected, onClick, type, symbol, color = '#f59e0b' }) =
 
 
      <div className={`relative flex items-center justify-center transition-all duration-300 ${isSelected ? 'scale-125 -translate-y-3' : 'hover:scale-110 active:scale-90'}`}>
-      
+
        <div className={`w-14 h-14 absolute animate-[spin_12s_linear_infinite] transition-colors duration-500 ${isSelected ? 'opacity-100' : 'opacity-40'}`}>
          <svg viewBox="0 0 100 100" className="w-full h-full" style={{ color: isSelected ? color : '#44403c' }}>
            <circle cx="50" cy="50" r="45" fill="none" stroke="currentColor" strokeWidth="2.5" strokeDasharray="12 6" />
@@ -678,7 +797,7 @@ const FancyMarker = ({ isSelected, onClick, type, symbol, color = '#f59e0b' }) =
        >
          <span className="text-[12px] font-black">{symbol}</span>
        </div>
-      
+
        <div className={`absolute -top-6 transition-all duration-500 ${isSelected ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'}`}>
          <div className="p-1.5 rounded-lg text-black shadow-lg border border-white/20" style={{ backgroundColor: color }}>
            <IconComponent size={14} />
@@ -693,5 +812,3 @@ const FancyMarker = ({ isSelected, onClick, type, symbol, color = '#f59e0b' }) =
    </div>
  );
 };
-
-
