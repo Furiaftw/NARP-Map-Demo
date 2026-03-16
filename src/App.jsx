@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
  X, Compass, Target, Info, ZoomIn,
  ZoomOut, Maximize, Plus, Trash2,
@@ -86,6 +86,9 @@ export default function App() {
 
 
  const mapContainerRef = useRef(null);
+ const imageWrapperRef = useRef(null);
+ const [imageNaturalSize, setImageNaturalSize] = useState(null);
+ const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
 
  const hasStaffAccess = isWhitelisted;
  const isOwner = authRole === 'owner';
@@ -229,6 +232,7 @@ export default function App() {
      });
      if (res.ok) {
        setMapUrl(mapLinkInput.trim());
+       setImageNaturalSize(null);
        setMapLinkMessage('Map link saved!');
        setTimeout(() => setMapLinkMessage(''), 3000);
      } else if (res.status === 401) {
@@ -271,6 +275,38 @@ export default function App() {
      await fetchPins();
    } catch {}
  };
+
+
+ // --- Image Aspect Ratio & Container Sizing ---
+ useEffect(() => {
+   const container = mapContainerRef.current;
+   if (!container) return;
+   const observer = new ResizeObserver(entries => {
+     const { width, height } = entries[0].contentRect;
+     setContainerSize({ width, height });
+   });
+   observer.observe(container);
+   return () => observer.disconnect();
+ }, [mapUrl]);
+
+ const handleImageLoad = (e) => {
+   setImageNaturalSize({ width: e.target.naturalWidth, height: e.target.naturalHeight });
+ };
+
+ const imageWrapperStyle = useMemo(() => {
+   if (!imageNaturalSize || !containerSize.width || !containerSize.height) {
+     return { width: '100%', height: '100%' };
+   }
+   const imageRatio = imageNaturalSize.width / imageNaturalSize.height;
+   const containerRatio = containerSize.width / containerSize.height;
+   if (imageRatio > containerRatio) {
+     const w = containerSize.width;
+     return { width: `${w}px`, height: `${w / imageRatio}px` };
+   } else {
+     const h = containerSize.height;
+     return { width: `${h * imageRatio}px`, height: `${h}px` };
+   }
+ }, [imageNaturalSize, containerSize]);
 
 
  // --- Navigation (Mouse + Pinch Zoom) ---
@@ -345,16 +381,10 @@ export default function App() {
 
 
    if (!hasMoved) {
-     if (isAdding && hasStaffAccess && mapContainerRef.current && (!e.touches || e.touches.length === 0)) {
-       const rect = mapContainerRef.current.getBoundingClientRect();
-       const clickX = clientX - rect.left;
-       const clickY = clientY - rect.top;
-       const centerX = rect.width / 2;
-       const centerY = rect.height / 2;
-       const relativeX = (clickX - centerX - position.x) / scale + centerX;
-       const relativeY = (clickY - centerY - position.y) / scale + centerY;
-       const leftPercent = (relativeX / rect.width) * 100;
-       const topPercent = (relativeY / rect.height) * 100;
+     if (isAdding && hasStaffAccess && imageWrapperRef.current && (!e.touches || e.touches.length === 0)) {
+       const rect = imageWrapperRef.current.getBoundingClientRect();
+       const leftPercent = ((clientX - rect.left) / rect.width) * 100;
+       const topPercent = ((clientY - rect.top) / rect.height) * 100;
        setShowEditor({ top: topPercent, left: leftPercent });
      } else {
        setSelectedId(null);
@@ -639,10 +669,11 @@ export default function App() {
                onTouchEnd={endDrag}
              >
                <div
-                 className="relative origin-center transition-transform duration-200 ease-out"
+                 className="relative origin-center transition-transform duration-200 ease-out flex items-center justify-center"
                  style={{ width: '100%', height: '100%', transform: `scale(${scale}) translate(${position.x / scale}px, ${position.y / scale}px)` }}
                >
-                 <img src={mapUrl} alt="Map" draggable="false" className="w-full h-full object-contain pointer-events-none brightness-[0.85] contrast-[1.1]" crossOrigin="anonymous" />
+                 <div ref={imageWrapperRef} className="relative" style={imageWrapperStyle}>
+                 <img src={mapUrl} alt="Map" draggable="false" className="w-full h-full block pointer-events-none brightness-[0.85] contrast-[1.1]" crossOrigin="anonymous" onLoad={handleImageLoad} />
 
 
                  {markers.map((m) => (
@@ -670,6 +701,7 @@ export default function App() {
                      <div className="w-10 h-10 rounded-full bg-amber-500 border-4 border-white flex items-center justify-center text-black font-black text-xl shadow-[0_0_30px_rgba(245,158,11,0.6)]">?</div>
                    </div>
                  )}
+                 </div>
                </div>
              </div>
 
