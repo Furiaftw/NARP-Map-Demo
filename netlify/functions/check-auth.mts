@@ -6,8 +6,15 @@ const OWNER_EMAIL = 'grisales4000@gmail.com'
 
 export default async (req: Request, context: Context) => {
   const user = await getUser()
-  if (!user || user.email?.toLowerCase() !== OWNER_EMAIL) {
-    return new Response('Forbidden', { status: 403 })
+  if (!user) {
+    return Response.json({ authenticated: false }, { status: 401 })
+  }
+
+  const email = user.email?.toLowerCase() || ''
+  const isOwner = email === OWNER_EMAIL
+
+  if (isOwner) {
+    return Response.json({ authenticated: true, email, role: 'owner', whitelisted: true })
   }
 
   const store = getStore({ name: 'whitelist', consistency: 'strong' })
@@ -17,10 +24,12 @@ export default async (req: Request, context: Context) => {
     if (raw) whitelist = JSON.parse(raw)
   } catch {}
 
-  return Response.json({ whitelist })
+  const whitelisted = whitelist.includes(email)
+
+  return Response.json({ authenticated: true, email, role: 'staff', whitelisted })
 }
 
 export const config: Config = {
-  path: '/api/whitelist',
+  path: '/api/check-auth',
   method: 'GET',
 }
