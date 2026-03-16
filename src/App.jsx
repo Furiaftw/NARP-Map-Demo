@@ -517,8 +517,8 @@ export default function App() {
                   <Target size={56} className="text-[#292524] animate-pulse relative z-10" />
                 </div>
                 <div>
-                  <h3 className="text-white font-black uppercase tracking-[0.5em] text-xs mb-4">Initialize Array</h3>
-                  <p className="text-[10px] text-[#57534e] uppercase tracking-widest leading-relaxed max-w-[220px] mx-auto">Select an active node to decrypt local tactical data.</p>
+                  <h3 className="text-white font-black uppercase tracking-[0.5em] text-xs mb-4">Pin Menu</h3>
+                  <p className="text-[10px] text-[#57534e] uppercase tracking-widest leading-relaxed max-w-[220px] mx-auto">Select a pin to show info.</p>
                 </div>
                 
                 {markers.length > 0 && (
