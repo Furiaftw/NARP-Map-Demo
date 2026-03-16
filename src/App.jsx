@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
-  X, Shield, Compass, Target, Info, ZoomIn, 
+  X, Scroll, Shield, Compass, Target, Info, ZoomIn, 
   ZoomOut, Maximize, MousePointer2, Plus, Trash2, 
   Upload, Save, Lock, Unlock, Landmark, Home, Star,
   Map as MapIcon, ChevronRight, Eye, Link as LinkIcon, User, Activity
@@ -12,41 +12,46 @@ const MARKER_TYPES = {
     id: 'VILLAGE', 
     label: 'Hidden Village', 
     icon: Landmark, 
-    defaultColor: '#f59e0b' 
+    defaultColor: '#f59e0b' // Amber
   },
   MINOR_VILLAGE: { 
     id: 'MINOR_VILLAGE', 
     label: 'Minor Hidden Village', 
     icon: Home, 
-    defaultColor: '#3b82f6' 
+    defaultColor: '#3b82f6' // Blue
   },
   SPECIAL: { 
     id: 'SPECIAL', 
     label: 'Special Locations', 
     icon: Star, 
-    defaultColor: '#a855f7' 
+    defaultColor: '#a855f7' // Purple
   }
 };
 
 export default function App() {
+  // Auth
   const [isAdmin, setIsAdmin] = useState(false);
   const [authInput, setAuthInput] = useState("");
   const [showLogin, setShowLogin] = useState(false);
 
+  // Map Data
   const [mapImage, setMapImage] = useState(null);
   const [markers, setMarkers] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [isAdding, setIsAdding] = useState(false);
   
+  // Viewport
   const [scale, setScale] = useState(1);
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [hasMoved, setHasMoved] = useState(false);
   
+  // Mobile Zoom
   const [initialPinchDistance, setInitialPinchDistance] = useState(null);
   const [initialScale, setInitialScale] = useState(1);
 
+  // UI
   const [showSidebar, setShowSidebar] = useState(false);
   const [showEditor, setShowEditor] = useState(null); 
   const [tempMarker, setTempMarker] = useState({ 
@@ -63,6 +68,7 @@ export default function App() {
   const mapContainerRef = useRef(null);
   const fileInputRef = useRef(null);
 
+  // --- Auth ---
   const handleLogin = (e) => {
     e.preventDefault();
     if (authInput.toUpperCase() === "NARP") {
@@ -88,6 +94,7 @@ export default function App() {
     }
   };
 
+  // --- Navigation (Mouse + Pinch Zoom) ---
   const handleZoom = useCallback((direction, factor = 0.3) => {
     setScale(prev => {
       const newScale = direction === 'in' ? prev + factor : prev - factor;
@@ -248,7 +255,7 @@ export default function App() {
               {isAdmin && (
                 <button 
                   onClick={() => fileInputRef.current.click()} 
-                  className="mt-8 px-10 py-4 bg-amber-500 text-black font-black uppercase tracking-widest rounded-xl shadow-[0_10px_30px_rgba(245,158,11,0.2)] hover:scale-105 transition-all"
+                  className="mt-6 px-10 py-4 bg-amber-500 text-black font-black uppercase tracking-widest rounded-xl shadow-[0_10px_30px_rgba(245,158,11,0.2)] hover:scale-105 transition-all"
                 >
                   Upload Map Data
                 </button>
@@ -399,7 +406,7 @@ export default function App() {
           h-[75vh] lg:h-full lg:w-[420px]
           bg-[#1c1917] border-t lg:border-t-0 lg:border-l border-[#292524]
           transition-transform duration-500 ease-in-out shadow-2xl
-          ${showSidebar ? 'translate-y-0 lg:translate-x-0' : 'translate-y-full lg:translate-x-full lg:hidden'}
+          ${showSidebar ? 'translate-y-0' : 'translate-y-full'} lg:translate-y-0 lg:translate-x-0 lg:block
         `}>
           <div className="lg:hidden w-full flex justify-center py-4 border-b border-[#292524]" onClick={() => setShowSidebar(false)}>
             <div className="w-12 h-1 bg-[#292524] rounded-full" />
@@ -443,7 +450,7 @@ export default function App() {
                       <div className="flex items-center gap-2 text-[#78716c] uppercase font-black text-[10px] tracking-widest border-b border-white/5 pb-3">
                         <Target size={14} /> Description
                       </div>
-                      <p className="text-sm text-[#d6d3d1] leading-relaxed italic opacity-90">
+                      <p className="text-sm text-[#d6d3d1] leading-relaxed italic opacity-90 whitespace-pre-wrap">
                         {selectedLoc.description ? `"${selectedLoc.description}"` : 'No detailed intel available.'}
                       </p>
                     </div>
@@ -480,7 +487,7 @@ export default function App() {
                               <div className="p-2 bg-white/10 rounded-lg" style={{ color: selectedLoc.color }}>
                                 <LinkIcon size={16} />
                               </div>
-                              <p className="text-xs font-bold leading-relaxed group-hover:underline" style={{ color: selectedLoc.color }}>
+                              <p className="text-xs font-bold leading-relaxed group-hover:underline mt-1" style={{ color: selectedLoc.color }}>
                                 {link.text}
                               </p>
                             </a>
