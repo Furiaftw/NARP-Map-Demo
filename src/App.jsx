@@ -4,7 +4,7 @@ import {
  ZoomOut, Maximize, MousePointer2, Plus, Trash2,
  Upload, Save, Lock, Unlock, Landmark, Home, Star,
  Map as MapIcon, ChevronRight, Eye, Link as LinkIcon, User, Activity,
- LogOut, Image
+ LogOut, Image, Users, EyeOff, Settings, UserCheck, UserX, Crown
 } from 'lucide-react';
 import {
   getUser,
@@ -38,6 +38,8 @@ const MARKER_TYPES = {
  }
 };
 
+const OWNER_EMAIL = 'grisales4000@gmail.com';
+
 
 export default function App() {
  // Auth (Netlify Identity)
@@ -45,7 +47,29 @@ export default function App() {
  const [authLoading, setAuthLoading] = useState(true);
  const [showLogin, setShowLogin] = useState(false);
 
- const isAdmin = !!currentUser;
+ // Role & Access
+ const [userRole, setUserRole] = useState(null);
+ const [userApproved, setUserApproved] = useState(false);
+ const [pendingApproval, setPendingApproval] = useState(false);
+ const [userEmail, setUserEmail] = useState('');
+
+ // Admin Panel
+ const [showAdminPanel, setShowAdminPanel] = useState(false);
+ const [whitelist, setWhitelist] = useState({});
+ const [newUserEmail, setNewUserEmail] = useState('');
+ const [newUserRole, setNewUserRole] = useState('user');
+
+ // Secret Access
+ const [secretAccess, setSecretAccess] = useState({});
+ const [grantEmail, setGrantEmail] = useState('');
+
+ // Marker Size
+ const [markerSize, setMarkerSize] = useState(1);
+ const [showSizeControl, setShowSizeControl] = useState(false);
+
+ const isOwner = userRole === 'owner';
+ const isStaff = userRole === 'staff';
+ const isAdmin = userApproved && (isOwner || isStaff);
 
  // Map Data
  const [mapUrl, setMapUrl] = useState('');
@@ -56,13 +80,15 @@ export default function App() {
  const [markers, setMarkers] = useState([]);
  const [selectedId, setSelectedId] = useState(null);
  const [isAdding, setIsAdding] = useState(false);
-  // Viewport
+
+ // Viewport
  const [scale, setScale] = useState(1);
  const [position, setPosition] = useState({ x: 0, y: 0 });
  const [isDragging, setIsDragging] = useState(false);
  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
  const [hasMoved, setHasMoved] = useState(false);
-  // Mobile Zoom
+
+ // Mobile Zoom
  const [initialPinchDistance, setInitialPinchDistance] = useState(null);
  const [initialScale, setInitialScale] = useState(1);
 
@@ -79,10 +105,24 @@ export default function App() {
    links: [{ text: '', url: '' }],
    status: '',
    leader: '',
+   isSecret: false,
  });
 
 
  const mapContainerRef = useRef(null);
+
+
+ // --- Auth Helpers ---
+ const getToken = useCallback(() => {
+   if (!currentUser) return null;
+   return currentUser?.token?.access_token || null;
+ }, [currentUser]);
+
+ const getAuthHeaders = useCallback(() => {
+   const token = getToken();
+   if (!token) return {};
+   return { 'Authorization': `Bearer ${token}` };
+ }, [getToken]);
 
 
  // --- Auth (Netlify Identity with Google OAuth) ---
@@ -105,11 +145,52 @@ export default function App() {
 
    const unsubscribe = onAuthChange((event, user) => {
      if (event === AUTH_EVENTS.LOGIN) setCurrentUser(user);
-     if (event === AUTH_EVENTS.LOGOUT) setCurrentUser(null);
+     if (event === AUTH_EVENTS.LOGOUT) {
+       setCurrentUser(null);
+       setUserRole(null);
+       setUserApproved(false);
+       setPendingApproval(false);
+       setUserEmail('');
+     }
    });
 
    return () => unsubscribe();
  }, []);
+
+
+ // --- Check Access on Login ---
+ useEffect(() => {
+   if (currentUser && !authLoading) {
+     checkAccess();
+   }
+ }, [currentUser, authLoading]);
+
+ const checkAccess = async () => {
+   try {
+     const token = currentUser?.token?.access_token;
+     if (!token) return;
+     const res = await fetch('/api/check-access', {
+       method: 'POST',
+       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+     });
+     if (res.ok) {
+       const data = await res.json();
+       setUserEmail(data.email || '');
+       if (data.approved) {
+         setUserRole(data.role);
+         setUserApproved(true);
+         setPendingApproval(false);
+       } else {
+         setPendingApproval(true);
+         setUserApproved(false);
+         setUserRole(null);
+       }
+     }
+   } catch {
+     // API not available
+   }
+ };
+
 
  const handleGoogleLogin = () => {
    oauthLogin('google');
@@ -122,6 +203,10 @@ export default function App() {
      // ignore
    }
    setCurrentUser(null);
+   setUserRole(null);
+   setUserApproved(false);
+   setPendingApproval(false);
+   setUserEmail('');
    setShowLogin(false);
  };
 
@@ -152,7 +237,7 @@ export default function App() {
    try {
      const res = await fetch('/api/map-link', {
        method: 'POST',
-       headers: { 'Content-Type': 'application/json' },
+       headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
        body: JSON.stringify({ url: mapLinkInput.trim() }),
      });
      if (res.ok) {
@@ -166,6 +251,101 @@ export default function App() {
      setMapLinkMessage('Error saving map link.');
    }
    setMapLinkSaving(false);
+ };
+
+
+ // --- Pin Persistence ---
+ useEffect(() => {
+   fetchPins();
+ }, [userApproved, currentUser]);
+
+ const fetchPins = async () => {
+   try {
+     const token = currentUser?.token?.access_token;
+     const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+     const res = await fetch('/api/pins', { headers });
+     if (res.ok) {
+       const data = await res.json();
+       setMarkers(data.pins || []);
+     }
+   } catch {
+     // API not available
+   }
+ };
+
+ const savePinToServer = async (action, pin = null, pinId = null) => {
+   try {
+     await fetch('/api/pins', {
+       method: 'POST',
+       headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+       body: JSON.stringify({ action, pin, pinId }),
+     });
+     await fetchPins();
+   } catch {}
+ };
+
+
+ // --- Whitelist Management (Owner) ---
+ const fetchWhitelist = async () => {
+   try {
+     const res = await fetch('/api/whitelist', { headers: getAuthHeaders() });
+     if (res.ok) {
+       const data = await res.json();
+       setWhitelist(data.whitelist || {});
+     }
+   } catch {}
+ };
+
+ const manageWhitelist = async (action, targetEmail, role = null) => {
+   try {
+     const res = await fetch('/api/whitelist', {
+       method: 'POST',
+       headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+       body: JSON.stringify({ action, targetEmail, role }),
+     });
+     if (res.ok) {
+       const data = await res.json();
+       setWhitelist(data.whitelist || {});
+     }
+   } catch {}
+ };
+
+ const openAdminPanel = () => {
+   setShowAdminPanel(true);
+   fetchWhitelist();
+   fetchSecretAccess();
+ };
+
+
+ // --- Secret Access Management ---
+ useEffect(() => {
+   if (isAdmin) {
+     fetchSecretAccess();
+   }
+ }, [isAdmin]);
+
+ const fetchSecretAccess = async () => {
+   try {
+     const res = await fetch('/api/secret-access', { headers: getAuthHeaders() });
+     if (res.ok) {
+       const data = await res.json();
+       setSecretAccess(data.secretAccess || {});
+     }
+   } catch {}
+ };
+
+ const manageSecretAccess = async (action, pinId, targetEmail) => {
+   try {
+     const res = await fetch('/api/secret-access', {
+       method: 'POST',
+       headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+       body: JSON.stringify({ action, pinId, targetEmail }),
+     });
+     if (res.ok) {
+       const data = await res.json();
+       setSecretAccess(data.secretAccess || {});
+     }
+   } catch {}
  };
 
 
@@ -262,7 +442,7 @@ export default function App() {
  };
 
 
- const saveMarker = () => {
+ const saveMarker = async () => {
    if (!tempMarker.name) return;
    const newMarker = {
      ...tempMarker,
@@ -270,15 +450,17 @@ export default function App() {
      top: `${showEditor.top}%`,
      left: `${showEditor.left}%`,
    };
-   setMarkers([...markers, newMarker]);
+   setMarkers(prev => [...prev, newMarker]);
    setShowEditor(null);
-   setTempMarker({ name: '', type: 'VILLAGE', symbol: '\u706B', color: '#f59e0b', description: '', links: [{ text: '', url: '' }], status: '', leader: '' });
+   setTempMarker({ name: '', type: 'VILLAGE', symbol: '\u706B', color: '#f59e0b', description: '', links: [{ text: '', url: '' }], status: '', leader: '', isSecret: false });
+   await savePinToServer('create', newMarker);
  };
 
 
- const deleteMarker = (id) => {
-   setMarkers(markers.filter(m => m.id !== id));
+ const deleteMarker = async (id) => {
+   setMarkers(prev => prev.filter(m => m.id !== id));
    if (selectedId === id) setSelectedId(null);
+   await savePinToServer('delete', null, id);
  };
 
 
@@ -312,6 +494,25 @@ export default function App() {
        <div className="flex items-center gap-2">
          {isAdmin ? (
            <div className="flex items-center gap-2">
+             {/* Role Badge */}
+             <span className={`hidden md:flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full border ${
+               isOwner ? 'bg-amber-500/10 text-amber-500 border-amber-500/30' : 'bg-blue-500/10 text-blue-500 border-blue-500/30'
+             }`}>
+               {isOwner ? <Crown size={10} /> : <Shield size={10} />}
+               {userRole}
+             </span>
+
+             {/* Admin Panel (Owner Only) */}
+             {isOwner && (
+               <button
+                 onClick={openAdminPanel}
+                 className="p-2 md:px-4 md:py-2 rounded-lg border transition-all text-xs font-bold uppercase tracking-widest flex items-center gap-2 bg-[#1c1917] text-white border-[#292524] hover:border-amber-500/50"
+               >
+                 <Users size={16}/>
+                 <span className="hidden sm:inline">Admin</span>
+               </button>
+             )}
+
              <button
                onClick={() => setShowMapLinkEditor(!showMapLinkEditor)}
                className={`p-2 md:px-4 md:py-2 rounded-lg border transition-all text-xs font-bold uppercase tracking-widest flex items-center gap-2
@@ -330,6 +531,24 @@ export default function App() {
                {isAdding ? <Save size={16}/> : <Plus size={16}/>}
                <span className="hidden sm:inline">{isAdding ? 'Finalize' : 'Add Pin'}</span>
              </button>
+             <button onClick={handleLogout} className="p-2 md:px-4 md:py-2 bg-red-900/10 text-red-500 rounded-lg border border-red-900/40 text-xs font-bold uppercase flex items-center gap-2">
+               <LogOut size={16} />
+               <span className="hidden sm:inline">Logout</span>
+             </button>
+           </div>
+         ) : currentUser && pendingApproval ? (
+           <div className="flex items-center gap-2">
+             <span className="text-[9px] font-bold text-yellow-500 uppercase tracking-widest hidden md:block">Pending Approval</span>
+             <button onClick={handleLogout} className="p-2 md:px-4 md:py-2 bg-red-900/10 text-red-500 rounded-lg border border-red-900/40 text-xs font-bold uppercase flex items-center gap-2">
+               <LogOut size={16} />
+               <span className="hidden sm:inline">Logout</span>
+             </button>
+           </div>
+         ) : currentUser && userApproved && userRole === 'user' ? (
+           <div className="flex items-center gap-2">
+             <span className="hidden md:flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full border bg-[#292524] text-[#78716c] border-[#292524]">
+               <User size={10} /> User
+             </span>
              <button onClick={handleLogout} className="p-2 md:px-4 md:py-2 bg-red-900/10 text-red-500 rounded-lg border border-red-900/40 text-xs font-bold uppercase flex items-center gap-2">
                <LogOut size={16} />
                <span className="hidden sm:inline">Logout</span>
@@ -380,6 +599,20 @@ export default function App() {
      )}
 
 
+     {/* Pending Approval Banner */}
+     {currentUser && pendingApproval && (
+       <div className="z-[55] bg-yellow-500/10 border-b border-yellow-500/20 px-4 py-4 md:px-8">
+         <div className="max-w-2xl mx-auto flex items-center gap-3">
+           <Shield size={16} className="text-yellow-500 flex-shrink-0" />
+           <div>
+             <p className="text-xs font-bold text-yellow-500 uppercase tracking-widest">Access Pending</p>
+             <p className="text-[10px] text-[#78716c] mt-1">Your account is awaiting approval from the Owner. You can view the map but cannot interact with it yet.</p>
+           </div>
+         </div>
+       </div>
+     )}
+
+
      <main className="flex-grow relative flex flex-col lg:flex-row h-[calc(100vh-68px)] overflow-hidden">
        <div className="flex-grow relative bg-[#0c0a09] h-full">
          {!mapUrl ? (
@@ -394,11 +627,36 @@ export default function App() {
            </div>
          ) : (
            <div className="h-full w-full relative touch-none select-none">
+             {/* Zoom & Size Controls */}
              <div className="absolute top-4 right-4 z-40 flex flex-col gap-2">
                <button onClick={() => handleZoom('in')} className="bg-black/70 hover:bg-amber-500 p-3 rounded-xl border border-white/10 text-white hover:text-black transition-all shadow-xl active:scale-90"><ZoomIn size={20}/></button>
                <button onClick={() => handleZoom('out')} className="bg-black/70 hover:bg-amber-500 p-3 rounded-xl border border-white/10 text-white hover:text-black transition-all shadow-xl active:scale-90"><ZoomOut size={20}/></button>
                <button onClick={resetZoom} className="bg-black/70 hover:bg-amber-500 p-3 rounded-xl border border-white/10 text-white hover:text-black transition-all shadow-xl active:scale-90"><Maximize size={20}/></button>
+               {userApproved && (
+                 <button onClick={() => setShowSizeControl(!showSizeControl)} className={`p-3 rounded-xl border transition-all shadow-xl active:scale-90 ${showSizeControl ? 'bg-amber-500 text-black border-amber-400' : 'bg-black/70 hover:bg-amber-500 border-white/10 text-white hover:text-black'}`}>
+                   <Settings size={20}/>
+                 </button>
+               )}
              </div>
+
+             {/* Marker Size Slider */}
+             {userApproved && showSizeControl && (
+               <div className="absolute top-4 left-4 z-40 bg-black/80 backdrop-blur-sm rounded-xl p-4 border border-white/10 shadow-xl">
+                 <div className="flex items-center gap-3">
+                   <span className="text-[9px] font-bold text-[#78716c] uppercase tracking-widest whitespace-nowrap">Pin Size</span>
+                   <input
+                     type="range"
+                     min="0.3"
+                     max="2"
+                     step="0.1"
+                     value={markerSize}
+                     onChange={e => setMarkerSize(parseFloat(e.target.value))}
+                     className="w-24 accent-amber-500"
+                   />
+                   <span className="text-[10px] text-amber-500 font-mono w-8">{markerSize.toFixed(1)}</span>
+                 </div>
+               </div>
+             )}
 
 
              <div
@@ -422,13 +680,15 @@ export default function App() {
                    <div
                      key={m.id}
                      className="absolute transform -translate-x-1/2 -translate-y-1/2 z-20"
-                     style={{ top: m.top, left: m.left, transform: `translate(-50%, -50%) scale(${Math.max(0.4, 1.2 / Math.sqrt(scale))})` }}
+                     style={{ top: m.top, left: m.left, transform: `translate(-50%, -50%) scale(${Math.max(0.4, 1.2 / Math.sqrt(scale)) * markerSize})` }}
                    >
                      <FancyMarker
                        isSelected={selectedId === m.id}
                        type={m.type}
                        symbol={m.symbol}
                        color={m.color}
+                       isSecret={m.isSecret}
+                       isAdmin={isAdmin}
                        onClick={() => {
                          setSelectedId(m.id);
                          if (window.innerWidth < 1024) setShowSidebar(true);
@@ -532,6 +792,24 @@ export default function App() {
                    </div>
 
 
+                   {/* Secret Pin Toggle (Staff/Owner Only) */}
+                   {isAdmin && (
+                     <div className="flex items-center justify-between p-3 bg-purple-900/10 rounded-xl border border-purple-500/20">
+                       <div className="flex items-center gap-2">
+                         <EyeOff size={14} className="text-purple-400" />
+                         <span className="text-[9px] font-black text-purple-400 uppercase tracking-widest">Secret Pin</span>
+                       </div>
+                       <button
+                         type="button"
+                         onClick={() => setTempMarker({...tempMarker, isSecret: !tempMarker.isSecret})}
+                         className={`w-10 h-5 rounded-full transition-colors flex items-center ${tempMarker.isSecret ? 'bg-purple-500' : 'bg-[#292524]'}`}
+                       >
+                         <div className={`w-4 h-4 rounded-full bg-white shadow transition-transform ${tempMarker.isSecret ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                       </button>
+                     </div>
+                   )}
+
+
                    <button onClick={saveMarker} className="w-full bg-amber-500 hover:bg-amber-400 text-black font-black uppercase tracking-[0.2em] py-4 rounded-xl shadow-lg transition-all">Create Pin</button>
                  </div>
                </div>
@@ -577,12 +855,19 @@ export default function App() {
                </div>
 
                <div className="mb-8">
-                 <span
-                   className="inline-block text-[10px] font-black px-2.5 py-1 rounded-full uppercase tracking-widest mb-3 text-black"
-                   style={{ backgroundColor: selectedLoc.color }}
-                 >
-                   {MARKER_TYPES[selectedLoc.type]?.label || 'Location'}
-                 </span>
+                 <div className="flex items-center gap-2 mb-3 flex-wrap">
+                   <span
+                     className="inline-block text-[10px] font-black px-2.5 py-1 rounded-full uppercase tracking-widest text-black"
+                     style={{ backgroundColor: selectedLoc.color }}
+                   >
+                     {MARKER_TYPES[selectedLoc.type]?.label || 'Location'}
+                   </span>
+                   {selectedLoc.isSecret && (
+                     <span className="inline-flex items-center gap-1 text-[10px] font-black px-2.5 py-1 rounded-full uppercase tracking-widest bg-purple-500/20 text-purple-400 border border-purple-500/30">
+                       <EyeOff size={10} /> Secret
+                     </span>
+                   )}
+                 </div>
                  <h2 className="text-4xl font-black text-white tracking-tight uppercase leading-tight">{selectedLoc.name}</h2>
                </div>
 
@@ -648,6 +933,54 @@ export default function App() {
                      })}
                    </div>
                  )}
+
+
+                 {/* Secret Pin Access Management */}
+                 {selectedLoc.isSecret && isAdmin && (
+                   <div className="bg-purple-900/10 rounded-2xl p-5 border border-purple-500/20 space-y-4">
+                     <div className="flex items-center gap-2">
+                       <EyeOff size={14} className="text-purple-400" />
+                       <span className="text-[10px] font-black text-purple-400 uppercase tracking-widest">Secret Pin Access</span>
+                     </div>
+
+                     <div className="space-y-2">
+                       <p className="text-[9px] font-bold text-[#78716c] uppercase tracking-widest">Users with access:</p>
+                       {(secretAccess[String(selectedLoc.id)] || []).length === 0 ? (
+                         <p className="text-[10px] text-[#57534e] italic">No additional access granted</p>
+                       ) : (
+                         (secretAccess[String(selectedLoc.id)] || []).map(email => (
+                           <div key={email} className="flex items-center justify-between bg-black/30 rounded-lg px-3 py-2">
+                             <span className="text-[10px] text-[#a8a29e] truncate">{email}</span>
+                             {isOwner && (
+                               <button
+                                 onClick={() => manageSecretAccess('revoke', selectedLoc.id, email)}
+                                 className="text-[9px] text-red-500 hover:text-red-400 font-bold uppercase ml-2 flex-shrink-0"
+                               >
+                                 Revoke
+                               </button>
+                             )}
+                           </div>
+                         ))
+                       )}
+                     </div>
+
+                     <div className="flex gap-2">
+                       <input
+                         value={grantEmail}
+                         onChange={e => setGrantEmail(e.target.value)}
+                         placeholder="user@email.com"
+                         className="flex-grow bg-black border border-[#292524] rounded-lg p-2.5 text-[10px] focus:border-purple-500/50 outline-none"
+                       />
+                       <button
+                         onClick={() => { if (grantEmail.trim()) { manageSecretAccess('grant', selectedLoc.id, grantEmail.trim()); setGrantEmail(''); } }}
+                         disabled={!grantEmail.trim()}
+                         className="px-4 py-2 bg-purple-500 hover:bg-purple-400 text-white rounded-lg text-[9px] font-bold uppercase tracking-widest disabled:opacity-50 transition-all flex-shrink-0"
+                       >
+                         Grant
+                       </button>
+                     </div>
+                   </div>
+                 )}
                </div>
 
 
@@ -679,6 +1012,7 @@ export default function App() {
                          <div className="flex items-center gap-4">
                            <span className="text-lg">{m.symbol}</span>
                            <span className="text-[11px] font-bold text-[#78716c] group-hover:text-white uppercase tracking-widest">{m.name}</span>
+                           {m.isSecret && isAdmin && <EyeOff size={10} className="text-purple-400" />}
                          </div>
                          <ChevronRight size={14} className="text-[#292524] group-hover:text-amber-500" />
                        </button>
@@ -711,6 +1045,7 @@ export default function App() {
      </nav>
 
 
+     {/* Login Modal */}
      {showLogin && (
        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/90 backdrop-blur-xl p-6">
          <div className="bg-[#1c1917] p-8 md:p-12 rounded-[2rem] border border-amber-500/10 shadow-3xl max-w-sm w-full text-center space-y-8">
@@ -747,6 +1082,177 @@ export default function App() {
      )}
 
 
+     {/* Admin Panel (Owner Only) */}
+     {showAdminPanel && isOwner && (
+       <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/90 backdrop-blur-xl p-4" onClick={() => setShowAdminPanel(false)}>
+         <div className="bg-[#1c1917] rounded-2xl border border-amber-500/20 shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+           {/* Admin Header */}
+           <div className="flex justify-between items-center p-6 border-b border-[#292524] flex-shrink-0">
+             <div className="flex items-center gap-3">
+               <div className="p-2 bg-amber-500/10 rounded-lg border border-amber-500/20">
+                 <Crown size={18} className="text-amber-500" />
+               </div>
+               <div>
+                 <h2 className="font-black text-white uppercase tracking-[0.2em] text-sm">Admin Panel</h2>
+                 <p className="text-[9px] text-[#78716c] uppercase tracking-widest mt-0.5">Owner Access Control</p>
+               </div>
+             </div>
+             <button onClick={() => setShowAdminPanel(false)} className="p-2 text-[#78716c] hover:text-white rounded-lg hover:bg-white/5">
+               <X size={20} />
+             </button>
+           </div>
+
+           {/* Admin Content */}
+           <div className="overflow-y-auto p-6 space-y-6 custom-scrollbar flex-grow">
+
+             {/* Add User */}
+             <div className="bg-black/30 rounded-xl p-5 border border-white/5">
+               <h3 className="text-[10px] font-black text-amber-500 uppercase tracking-[0.3em] mb-4">Add User to Whitelist</h3>
+               <div className="flex gap-2">
+                 <input
+                   value={newUserEmail}
+                   onChange={e => setNewUserEmail(e.target.value)}
+                   placeholder="user@gmail.com"
+                   className="flex-grow bg-black border border-[#292524] rounded-lg p-3 text-sm focus:border-amber-500/50 outline-none"
+                 />
+                 <select
+                   value={newUserRole}
+                   onChange={e => setNewUserRole(e.target.value)}
+                   className="bg-black border border-[#292524] rounded-lg px-3 text-sm outline-none text-white"
+                 >
+                   <option value="user">User</option>
+                   <option value="staff">Staff</option>
+                 </select>
+                 <button
+                   onClick={() => { if (newUserEmail.trim()) { manageWhitelist('add', newUserEmail.trim(), newUserRole); setNewUserEmail(''); } }}
+                   disabled={!newUserEmail.trim()}
+                   className="px-5 py-3 bg-amber-500 hover:bg-amber-400 text-black rounded-lg font-black text-[10px] uppercase tracking-widest disabled:opacity-50 transition-all"
+                 >
+                   Add
+                 </button>
+               </div>
+             </div>
+
+             {/* User List */}
+             <div className="bg-black/30 rounded-xl p-5 border border-white/5">
+               <h3 className="text-[10px] font-black text-amber-500 uppercase tracking-[0.3em] mb-4">Whitelisted Users</h3>
+               <div className="space-y-2">
+                 {Object.keys(whitelist).length === 0 ? (
+                   <p className="text-[10px] text-[#57534e] italic">No users yet. Add one above.</p>
+                 ) : (
+                   Object.entries(whitelist).map(([email, data]) => (
+                     <div key={email} className="flex items-center justify-between p-3.5 bg-[#0c0a09] rounded-xl border border-white/5 gap-3">
+                       <div className="flex-grow min-w-0">
+                         <div className="flex items-center gap-2">
+                           <span className="text-xs font-bold text-white truncate">{data.name || email}</span>
+                           {email === OWNER_EMAIL && <Crown size={12} className="text-amber-500 flex-shrink-0" />}
+                         </div>
+                         <div className="flex items-center gap-3 mt-1">
+                           <span className="text-[9px] text-[#57534e] truncate">{email}</span>
+                           {data.lastLogin && (
+                             <span className="text-[8px] text-[#44403c]">
+                               Last: {new Date(data.lastLogin).toLocaleDateString()}
+                             </span>
+                           )}
+                         </div>
+                       </div>
+                       <div className="flex items-center gap-2 flex-shrink-0">
+                         <span className={`text-[9px] font-black uppercase px-2.5 py-1 rounded-full tracking-wider ${
+                           data.role === 'owner' ? 'bg-amber-500/20 text-amber-500' :
+                           data.role === 'staff' ? 'bg-blue-500/20 text-blue-500' :
+                           'bg-[#292524] text-[#78716c]'
+                         }`}>
+                           {data.role}
+                         </span>
+                         {email !== OWNER_EMAIL && (
+                           <>
+                             <select
+                               value={data.role}
+                               onChange={e => manageWhitelist('set-role', email, e.target.value)}
+                               className="bg-black border border-[#292524] rounded-lg px-2 py-1.5 text-[10px] outline-none text-white"
+                             >
+                               <option value="user">User</option>
+                               <option value="staff">Staff</option>
+                             </select>
+                             {data.approved ? (
+                               <button
+                                 onClick={() => manageWhitelist('revoke', email)}
+                                 className="p-2 bg-red-900/20 text-red-500 rounded-lg hover:bg-red-900/40 transition-colors"
+                                 title="Revoke access"
+                               >
+                                 <UserX size={14} />
+                               </button>
+                             ) : (
+                               <button
+                                 onClick={() => manageWhitelist('approve', email, data.role)}
+                                 className="p-2 bg-green-900/20 text-green-500 rounded-lg hover:bg-green-900/40 transition-colors"
+                                 title="Approve access"
+                               >
+                                 <UserCheck size={14} />
+                               </button>
+                             )}
+                           </>
+                         )}
+                       </div>
+                     </div>
+                   ))
+                 )}
+               </div>
+             </div>
+
+             {/* Secret Pin Access Overview */}
+             <div className="bg-black/30 rounded-xl p-5 border border-white/5">
+               <h3 className="text-[10px] font-black text-amber-500 uppercase tracking-[0.3em] mb-4">Secret Pin Access Overview</h3>
+               {markers.filter(m => m.isSecret).length === 0 ? (
+                 <p className="text-[10px] text-[#57534e] italic">No secret pins created yet.</p>
+               ) : (
+                 <div className="space-y-3">
+                   {markers.filter(m => m.isSecret).map(pin => (
+                     <div key={pin.id} className="bg-[#0c0a09] rounded-xl p-4 border border-purple-500/10">
+                       <div className="flex items-center gap-2 mb-3">
+                         <EyeOff size={12} className="text-purple-400" />
+                         <span className="text-xs font-bold text-white uppercase tracking-widest">{pin.name}</span>
+                       </div>
+                       <div className="space-y-1.5">
+                         {(secretAccess[String(pin.id)] || []).length === 0 ? (
+                           <p className="text-[9px] text-[#57534e] italic">No one has access</p>
+                         ) : (
+                           (secretAccess[String(pin.id)] || []).map(email => (
+                             <div key={email} className="flex items-center justify-between bg-black/50 rounded-lg px-3 py-2">
+                               <span className="text-[10px] text-[#a8a29e]">{email}</span>
+                               <button
+                                 onClick={() => manageSecretAccess('revoke', pin.id, email)}
+                                 className="text-[9px] text-red-500 hover:text-red-400 font-bold uppercase"
+                               >
+                                 Revoke
+                               </button>
+                             </div>
+                           ))
+                         )}
+                       </div>
+                       <div className="flex gap-2 mt-3">
+                         <input
+                           placeholder="Grant access to email..."
+                           className="flex-grow bg-black border border-[#292524] rounded-lg p-2.5 text-[10px] focus:border-purple-500/50 outline-none"
+                           onKeyDown={e => {
+                             if (e.key === 'Enter' && e.target.value.trim()) {
+                               manageSecretAccess('grant', pin.id, e.target.value.trim());
+                               e.target.value = '';
+                             }
+                           }}
+                         />
+                       </div>
+                     </div>
+                   ))}
+                 </div>
+               )}
+             </div>
+           </div>
+         </div>
+       </div>
+     )}
+
+
      <style dangerouslySetInnerHTML={{ __html: `
        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
        .custom-scrollbar::-webkit-scrollbar-thumb { background: #292524; border-radius: 10px; }
@@ -757,7 +1263,7 @@ export default function App() {
 }
 
 
-const FancyMarker = ({ isSelected, onClick, type, symbol, color = '#f59e0b' }) => {
+const FancyMarker = ({ isSelected, onClick, type, symbol, color = '#f59e0b', isSecret = false, isAdmin = false }) => {
  const IconComponent = MARKER_TYPES[type]?.icon || Landmark;
  const pulseColorAlpha = color + '66';
   return (
@@ -804,6 +1310,14 @@ const FancyMarker = ({ isSelected, onClick, type, symbol, color = '#f59e0b' }) =
          </div>
        </div>
 
+       {/* Secret indicator for admins */}
+       {isSecret && isAdmin && (
+         <div className="absolute -bottom-5 left-1/2 -translate-x-1/2">
+           <div className="p-0.5 rounded bg-purple-500/80">
+             <EyeOff size={8} className="text-white" />
+           </div>
+         </div>
+       )}
 
        <div className={`absolute top-full mt-[-1px] transition-all duration-500 ${isSelected ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 -translate-y-2 scale-50'}`}>
          <div className="w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-t-[10px] shadow-xl" style={{ borderTopColor: color }} />
