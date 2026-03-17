@@ -913,7 +913,7 @@ export default function App() {
 
 
                <div className="mt-10 pt-8 border-t border-[#292524] text-center">
-                  <p className="text-[10px] font-bold text-[#44403c] uppercase tracking-[0.4em]">Property of Allied Forces</p>
+                  <p className="text-[10px] font-bold text-[#44403c] uppercase tracking-[0.4em]">NARP World</p>
                </div>
              </div>
            ) : (
