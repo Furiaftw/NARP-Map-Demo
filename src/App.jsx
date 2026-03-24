@@ -4,9 +4,10 @@ import {
  ZoomOut, Maximize, Plus, Trash2,
  Save, Landmark, Home, Star,
  Map as MapIcon, ChevronRight, Eye, Link as LinkIcon, User, Activity,
- Image, Settings, LogIn, LogOut, Shield, UserPlus, UserMinus
+ Image, Settings, LogIn, LogOut, Shield, UserPlus, UserMinus, Paintbrush
 } from 'lucide-react';
 import { oauthLogin, handleAuthCallback, getUser, logout as identityLogout } from '@netlify/identity';
+import MapDrawingCanvas from './MapDrawingCanvas';
 
 
 // --- Tactical Categories & Default Colors ---
@@ -73,6 +74,7 @@ export default function App() {
  // UI
  const [showSidebar, setShowSidebar] = useState(false);
  const [showEditor, setShowEditor] = useState(null);
+ const [drawMode, setDrawMode] = useState(false);
  const [tempMarker, setTempMarker] = useState({
    name: '',
    type: 'VILLAGE',
@@ -87,6 +89,7 @@ export default function App() {
 
  const mapContainerRef = useRef(null);
  const imageWrapperRef = useRef(null);
+ const drawToolbarRef = useRef(null);
  const [imageNaturalSize, setImageNaturalSize] = useState(null);
  const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
 
@@ -146,6 +149,7 @@ export default function App() {
    setShowAdminPanel(false);
    setShowMapLinkEditor(false);
    setIsAdding(false);
+   setDrawMode(false);
  };
 
  // --- Whitelist Management (Owner only) ---
@@ -450,6 +454,15 @@ export default function App() {
          {hasStaffAccess && (
            <>
              <button
+               onClick={() => { setDrawMode(!drawMode); if (!drawMode) { setIsAdding(false); } }}
+               className={`p-2 md:px-4 md:py-2 rounded-lg border transition-all text-xs font-bold uppercase tracking-widest flex items-center gap-2
+                 ${drawMode ? 'bg-amber-500 text-black border-amber-400' : 'bg-[#1c1917] text-white border-[#292524]'}
+               `}
+             >
+               <Paintbrush size={16}/>
+               <span className="hidden sm:inline">Draw</span>
+             </button>
+             <button
                onClick={() => setShowMapLinkEditor(!showMapLinkEditor)}
                className={`p-2 md:px-4 md:py-2 rounded-lg border transition-all text-xs font-bold uppercase tracking-widest flex items-center gap-2
                  ${showMapLinkEditor ? 'bg-amber-500 text-black border-amber-400' : 'bg-[#1c1917] text-white border-[#292524]'}
@@ -459,7 +472,7 @@ export default function App() {
                <span className="hidden sm:inline">Map Link</span>
              </button>
              <button
-               onClick={() => setIsAdding(!isAdding)}
+               onClick={() => { setIsAdding(!isAdding); if (!isAdding) { setDrawMode(false); } }}
                className={`p-2 md:px-4 md:py-2 rounded-lg border transition-all text-xs font-bold uppercase tracking-widest flex items-center gap-2
                  ${isAdding ? 'bg-amber-500 text-black border-amber-400' : 'bg-[#1c1917] text-white border-[#292524]'}
                `}
@@ -660,13 +673,13 @@ export default function App() {
 
              <div
                ref={mapContainerRef}
-               className={`h-full w-full overflow-hidden transition-all duration-300 ${isAdding && hasStaffAccess ? 'ring-inset ring-4 ring-amber-500/10 cursor-crosshair' : ''}`}
-               onMouseDown={startDrag}
-               onMouseMove={onDrag}
-               onMouseUp={endDrag}
-               onTouchStart={startDrag}
-               onTouchMove={onDrag}
-               onTouchEnd={endDrag}
+               className={`h-full w-full overflow-hidden transition-all duration-300 ${drawMode && hasStaffAccess ? 'ring-inset ring-4 ring-amber-500/10' : ''} ${isAdding && hasStaffAccess ? 'ring-inset ring-4 ring-amber-500/10 cursor-crosshair' : ''}`}
+               onMouseDown={drawMode ? undefined : startDrag}
+               onMouseMove={drawMode ? undefined : onDrag}
+               onMouseUp={drawMode ? undefined : endDrag}
+               onTouchStart={drawMode ? undefined : startDrag}
+               onTouchMove={drawMode ? undefined : onDrag}
+               onTouchEnd={drawMode ? undefined : endDrag}
              >
                <div
                  className="relative origin-center transition-transform duration-200 ease-out flex items-center justify-center"
@@ -695,6 +708,16 @@ export default function App() {
                    </div>
                  ))}
 
+                 {/* Drawing Canvas Overlay */}
+                 <MapDrawingCanvas
+                   imageWrapperRef={imageWrapperRef}
+                   imageNaturalSize={imageNaturalSize}
+                   isActive={drawMode}
+                   onClose={() => setDrawMode(false)}
+                   hasStaffAccess={hasStaffAccess}
+                   scale={scale}
+                   toolbarContainerRef={drawToolbarRef}
+                 />
 
                  {showEditor && (
                    <div className="absolute transform -translate-x-1/2 -translate-y-1/2 z-30 animate-bounce" style={{ top: `${showEditor.top}%`, left: `${showEditor.left}%` }}>
@@ -705,6 +728,8 @@ export default function App() {
                </div>
              </div>
 
+             {/* Drawing toolbar portal target - outside zoom context */}
+             <div ref={drawToolbarRef} className="absolute inset-0 z-[42] pointer-events-none [&>*]:pointer-events-auto" />
 
              {showEditor && (
                <div className="absolute inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-300" onMouseDown={e => e.stopPropagation()} onTouchStart={e => e.stopPropagation()}>
@@ -964,7 +989,13 @@ export default function App() {
          <span className="text-[8px] font-black uppercase tracking-widest">Info</span>
        </button>
        {hasStaffAccess && (
-         <button onClick={() => setIsAdding(!isAdding)} className={`flex flex-col items-center gap-1.5 ${isAdding ? 'text-amber-500' : 'text-[#78716c]'}`}>
+         <button onClick={() => { setDrawMode(!drawMode); if (!drawMode) { setIsAdding(false); } }} className={`flex flex-col items-center gap-1.5 ${drawMode ? 'text-amber-500' : 'text-[#78716c]'}`}>
+           <Paintbrush size={22} />
+           <span className="text-[8px] font-black uppercase tracking-widest">Draw</span>
+         </button>
+       )}
+       {hasStaffAccess && (
+         <button onClick={() => { setIsAdding(!isAdding); if (!isAdding) { setDrawMode(false); } }} className={`flex flex-col items-center gap-1.5 ${isAdding ? 'text-amber-500' : 'text-[#78716c]'}`}>
            <Plus size={22} />
            <span className="text-[8px] font-black uppercase tracking-widest">Add Pin</span>
          </button>
